@@ -11,7 +11,7 @@ AccedeLedger turns one narrow semantic decision into an inspectable workflow. Ge
 ## Links
 
 - Website: <https://accede-ledger.vercel.app/>
-- GitHub: `PENDING_GITHUB_URL`
+- GitHub: <https://github.com/kinhdoanhcam-art/AccedeLedger>
 - Project contract: <https://explorer-studio.genlayer.com/address/0x043F8e52461165BEfe5b8fE66F1de8F4F0C92C35>
 - Runtime proof: <https://explorer-studio.genlayer.com/tx/0x9b10ec6a9395fc2fee910818b6d01e77abc076f0528bec7e384369a8cfa468c4>
 
