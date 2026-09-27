@@ -3,6 +3,11 @@ import fs from "node:fs";
 
 const expectedHash = "6a0442d9156d99dbf7471ba5aa08f1428b7b3746d25f57df6c2a2beeb212ab28";
 const projectAddress = "0x043F8e52461165BEfe5b8fE66F1de8F4F0C92C35";
+const documentedRuntimeAddresses = new Set([
+  projectAddress,
+  "0x3065E31B1D993d7C0D59E6786844cBa56780B2d3",
+  "0x5a52d040581A76e2C032542855D31480f2ea7097",
+].map((address) => address.toLowerCase()));
 
 function read(path) {
   return fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -45,9 +50,9 @@ const publicFiles = [
   "src/lib/genlayer.ts",
 ].map(read).join("\n");
 
-const addresses = publicFiles.match(/0x[0-9a-fA-F]{40}/g) ?? [];
+const addresses = publicFiles.match(/0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g) ?? [];
 for (const address of addresses) {
-  if (address.toLowerCase() !== projectAddress.toLowerCase()) {
+  if (!documentedRuntimeAddresses.has(address.toLowerCase())) {
     fail(`stale address in public Project files: ${address}`);
   }
 }

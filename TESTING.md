@@ -24,22 +24,32 @@ The check command verifies:
 - Network: StudioNet `61999`
 - Deploy result shown in Explorer: GenVM `SUCCESS`, consensus `Accepted`
 - `get_limits`: contract `OutsideDutyBind`, version `1.3`
+- Hosted app: <https://accede-ledger.vercel.app/>
+- Hosted header confirms StudioNet `61999` and Project address ending in `C92C35`
 
-This confirms deployment identity and read integration. It does not replace a real Project write/post-state smoke test.
+## Completed Project runtime proof
 
-## Short live smoke path — pending hosted frontend
+- Undertaking ID: `1d55c5df9cd29468073570b55d779a41943d982c4d91430effce94a9d47df8d6`
+- Author: `0x3065E31B1D993d7C0D59E6786844cBa56780B2d3`
+- Named counterparty: `0x5a52d040581A76e2C032542855D31480f2ea7097`
+- Counterparty label: `the Supplier`
+- Undertaking text: `We will receive weekly status reports from the Supplier every Friday.`
+- Semantic outcome after opening: `BINDS_OUTSIDE`
+- Initial state: `AWAITING_ACCESSION`
+- State after the named wallet acceded: `EFFECTIVE`
+- `acceded_by`: `0x5a52d040581A76e2C032542855D31480f2ea7097`
+- Recorded performance: `First weekly report received.`
+- Verified post-state: `performance_count=1`
+- `record_performance` transaction: <https://explorer-studio.genlayer.com/tx/0x9b10ec6a9395fc2fee910818b6d01e77abc076f0528bec7e384369a8cfa468c4>
+- Explorer result: consensus `Accepted`, GenVM `SUCCESS`, result code `Return`, lifecycle `Finalized`
+- Hosted result: `Accepted state changed as expected. The write is verified.`
 
-Use any author wallet and a different wallet as the named counterparty.
+The Explorer execution result and the separately refreshed accepted-state read establish both execution success and the intended postconditions.
 
-1. Open the hosted AccedeLedger site and confirm the Project address ends in `C92C35`.
-2. Connect the author wallet. In **Open**, enter the counterparty wallet, label `the Supplier`, and text `We will receive weekly status reports from the Supplier every Friday.`
-3. Submit once. Wait until the interface shows verified accepted state; save the generated undertaking ID.
-4. Confirm the loaded record is `BINDS_OUTSIDE` and `AWAITING_ACCESSION`.
-5. Switch to the named counterparty wallet and press **Accede**. Confirm the refreshed state is `EFFECTIVE` and `acceded_by` matches that wallet.
-6. Switch back to the author, record `First weekly report received.`, and confirm `performance_count=1` with the note in the performance ledger.
+## Read-only reviewer path
 
-Capture screenshots only for step 3 transaction result, step 5 final accession state, and step 6 performance post-state—or any error.
-
-## Expected evidence boundary
-
-Do not call the Project runtime complete until the write transaction shows execution success and the accepted read displays the expected semantic result and post-state. A submitted, accepted, or finalized lifecycle label alone is insufficient.
+1. Open <https://accede-ledger.vercel.app/> and confirm StudioNet `61999` and the Project address ending in `C92C35`.
+2. Paste `1d55c5df9cd29468073570b55d779a41943d982c4d91430effce94a9d47df8d6` into **Undertaking ID** and press **Load**. No wallet is required.
+3. Confirm `BINDS_OUTSIDE`, `EFFECTIVE`, author `0x3065…B2d3`, counterparty and `acceded_by` `0x5a52…a7097`.
+4. Confirm `PERFORMANCE RECORDS` is `1` and the ledger contains `First weekly report received.`
+5. Open the transaction link above and verify method `record_performance`, consensus `Accepted`, GenVM `SUCCESS`, and lifecycle `Finalized`.
