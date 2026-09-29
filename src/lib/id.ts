@@ -1,15 +1,24 @@
 import { keccak256, stringToBytes } from "viem";
 
+// Exact whitespace set used by Python str.strip()/str.split(). U+FEFF is
+// intentionally absent because Python does not classify it as whitespace.
+const PY_WS = /[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/gu;
+const PY_WS_EDGE = /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu;
+
+export function pyStrip(value: string): string {
+  return value.replace(PY_WS_EDGE, "");
+}
+
 export function stripText(value: string): string {
-  return value.trim();
+  return pyStrip(value);
 }
 
 export function normalizeText(value: string): string {
-  return stripText(value).split(/\s+/u).join(" ");
+  return pyStrip(value).split(PY_WS).filter(Boolean).join(" ");
 }
 
 export function normalizeId(value: string): string {
-  return value.trim().toLowerCase().replace(/^0x/, "");
+  return pyStrip(value).toLowerCase().replace(/^0x/, "");
 }
 
 export function undertakingId(creator: string, text: string): string {

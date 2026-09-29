@@ -23,18 +23,37 @@ This address is separate from the Intelligent Contract submission address. The f
 - Exposes accession and decline only for the named counterparty flow.
 - Lets the author record performance only when the undertaking is effective and uncontested.
 - Lets the named counterparty contest once after effectiveness.
-- Shows transaction submission separately from verified accepted-state success.
+- Checks the submitted transaction's leader receipt before accepted state can prove success.
+- Matches every field of a newly opened record before reporting a verified write.
 - Links the contract and submitted transactions to Studio Explorer.
 
 No live-looking record is seeded or fabricated. Empty state remains empty until a real ID is loaded or a wallet submits a real transaction.
+
+## One undertaking per author per text
+
+The contract derives each undertaking ID from the author's wallet and normalized undertaking text. The counterparty is intentionally not part of that ID. The same author therefore cannot open the same text twice, even when the second submission names a different counterparty. To create a separate undertaking for another counterparty, the author must change the undertaking wording. This is frozen contract behavior, not a contract defect; the interface now detects it before submission and explains the rule instead of allowing a later rollback to look successful.
+
+## How write success is reported
+
+The interface verifies two independent facts in order:
+
+1. The authoritative leader receipt for the exact submitted transaction must report success. An error receipt is final for the interface; an existing record cannot rescue it. A missing execution result remains pending.
+2. Accepted state must then match the expected post-state. For `open_undertaking`, that means the complete fresh record, including the submitted counterparty, label, stored text, outcome/code/state consistency, and untouched fresh-record markers.
+
+The optional `VITE_ALLOW_DUPLICATE_SEND=1` setting enables a controlled evidence path. Even in that temporary build, the normal URL keeps the preflight active; adding `?duplicate-proof=1` bypasses only that preflight so a real rollback transaction can be captured. The setting is `0` by default, which makes the query parameter inert, and it must not be enabled for the normal public deployment.
 
 ## Run locally
 
 ```bash
 npm ci
+npm run typecheck
+npm test
 npm run check
+node ACCEDELEDGER_PROOF.mjs
 npm run dev
 ```
+
+The executable parity suite requires Node.js 22.18 or newer and Python 3.
 
 For Vercel, keep the default Project address or set `VITE_CONTRACT_ADDRESS` to the same address. The included `/api/rpc` function proxies StudioNet reads without storing credentials.
 

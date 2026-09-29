@@ -8,6 +8,10 @@ import {
   STUDIO_WALLET_RPC,
 } from "./config";
 import type { Limits, Performance, Undertaking } from "./types";
+import { txOutcomeFromTransaction } from "./verify";
+import type { TxOutcome } from "./verify";
+
+export type { TxOutcome } from "./verify";
 
 function projectChain() {
   const chain: any = studionet as any;
@@ -184,21 +188,7 @@ export async function writeContract(account: string, functionName: string, args:
   })) as string;
 }
 
-export async function rollbackReason(hash: string): Promise<string | undefined> {
-  try {
-    const tx: any = await readClient.getTransaction({ hash });
-    const consensus = tx?.consensus_data ?? tx?.consensusData;
-    let leader = consensus?.leader_receipt ?? consensus?.leaderReceipt;
-    if (Array.isArray(leader)) {
-      leader = leader.find((receipt: any) => String(receipt?.mode ?? "").toUpperCase() === "LEADER") ?? leader[0];
-    }
-    const result = String(leader?.execution_result ?? leader?.executionResult ?? "").toUpperCase();
-    if (result !== "ERROR" && result !== "FINISHED_WITH_ERROR") return undefined;
-    for (const field of [leader?.error, leader?.message, leader?.return_data, leader?.returnData]) {
-      if (typeof field === "string" && field.trim()) return field.trim();
-    }
-    return "Contract execution rolled back.";
-  } catch {
-    return undefined;
-  }
+export async function readOutcome(hash: string): Promise<TxOutcome> {
+  const tx: any = await readClient.getTransaction({ hash });
+  return txOutcomeFromTransaction(tx);
 }

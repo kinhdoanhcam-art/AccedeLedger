@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
-    "test": "node tests/verify-project.mjs && node tests/ids.mjs",
+    "test": "node tests/verify-project.mjs && node tests/ids.mjs && node tests/parity.mjs && node tests/verify-outcome.mjs",
     "check": "npm run test && npm run build"
   },
   "dependencies": {

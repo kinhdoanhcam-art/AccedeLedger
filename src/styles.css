@@ -67,6 +67,9 @@ input:focus, textarea:focus { border-color: var(--ink); box-shadow: 0 0 0 3px #0
 .tx-banner { margin: 22px 0 0; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; border: 1px solid; padding: 13px 15px; font-size: 13px; }
 .tx-banner p { margin: 0; }
 .tx-banner a { display: inline-flex; align-items: center; gap: 5px; font-weight: 800; }
+.tx-failure { display: grid; gap: 5px; }
+.tx-failure strong { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.tx-failure small { line-height: 1.45; }
 .tx-banner.signing, .tx-banner.submitted { color: #6b5710; border-color: #d6c165; background: #fff9d9; }
 .tx-banner.success { color: #176947; border-color: #8ed0b4; background: #edfff7; }
 .tx-banner.error { color: #992f21; border-color: #e2a297; background: #fff3f0; }

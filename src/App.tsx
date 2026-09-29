@@ -34,12 +34,13 @@ import {
   getLimits,
   getPerformances,
   getUndertaking,
+  readOutcome,
   requestWallet,
-  rollbackReason,
   writeContract,
 } from "./lib/genlayer";
-import { normalizeId, short, undertakingId, validId } from "./lib/id";
+import { normalizeId, pyStrip, short, undertakingId, validId } from "./lib/id";
 import type { Limits, Performance, TxState, Undertaking } from "./lib/types";
+import { decideWrite, expectedNewUndertaking } from "./lib/verify";
 
 type View = "ledger" | "open" | "protocol";
 
@@ -48,9 +49,9 @@ const EMPTY_TX: TxState = {
   message: "No transaction submitted in this session.",
 };
 
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
+const ALLOW_DUPLICATE_SEND =
+  import.meta.env.VITE_ALLOW_DUPLICATE_SEND === "1" &&
+  new URLSearchParams(window.location.search).get("duplicate-proof") === "1";
 
 function stateTone(value: string) {
   if (value === "EFFECTIVE") return "good";
@@ -163,30 +164,19 @@ export default function App() {
     id: string,
     accepted: (next: Undertaking) => boolean
   ) {
-    for (const wait of [12000, 25000, 45000]) {
-      await delay(wait);
-      try {
-        const next = await readRecord(id, false);
-        if (accepted(next)) {
-          setTx({
-            kind: "success",
-            hash,
-            message: "Accepted state changed as expected. The write is verified.",
-          });
-          return;
-        }
-      } catch {
-        // The accepted-state read may lag or the opening write may have rolled back.
-      }
-    }
-    const reason = await rollbackReason(hash);
-    setTx({
-      kind: reason ? "error" : "submitted",
+    const decision = await decideWrite({
       hash,
-      message: reason
-        ? `Transaction rolled back: ${reason}`
-        : "The transaction was submitted, but accepted state is not verified yet. Inspect it on Explorer, then refresh once finalized.",
+      readOutcome,
+      readRecord: () => readRecord(id, false),
+      accepted,
     });
+    setTx({ ...decision, hash });
+
+    // Refresh a stale record only for display after a rollback. decideWrite has
+    // already rejected the receipt and never uses this state as success proof.
+    if (decision.kind === "error" && decision.message.startsWith("Transaction rolled back:")) {
+      await readRecord(id, false).catch(() => undefined);
+    }
   }
 
   async function runWrite(
@@ -222,35 +212,68 @@ export default function App() {
 
   async function openUndertaking() {
     if (!account) return setTx({ kind: "error", message: "Connect the author wallet first." });
-    if (!/^0x[0-9a-fA-F]{40}$/.test(counterparty.trim())) {
+    const submittedWallet = counterparty.trim().toLowerCase();
+    const submittedLabel = pyStrip(label);
+    const submittedText = pyStrip(text);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(submittedWallet)) {
       return setTx({ kind: "error", message: "Enter a valid counterparty wallet." });
     }
-    if (!label.trim() || label.trim().length > MAX_LABEL_LENGTH) {
+    if (!submittedLabel || [...submittedLabel].length > MAX_LABEL_LENGTH) {
       return setTx({ kind: "error", message: `Counterparty label must be 1–${MAX_LABEL_LENGTH} characters.` });
     }
-    if (!text.trim() || text.trim().length > MAX_TEXT_LENGTH) {
+    if (!submittedText || [...submittedText].length > MAX_TEXT_LENGTH) {
       return setTx({ kind: "error", message: `Undertaking text must be 1–${MAX_TEXT_LENGTH} characters.` });
     }
     const id = undertakingId(account, text);
+
+    if (!ALLOW_DUPLICATE_SEND) {
+      const existing = await getUndertaking(id).catch(() => null);
+      if (existing?.undertaking_id === id) {
+        setIdInput(id);
+        setView("ledger");
+        await readRecord(id, false).catch(() => {
+          setRecord(existing);
+          setPerformances([]);
+          setContestNote("");
+        });
+        setTx({
+          kind: "error",
+          message:
+            `You already opened an undertaking with this exact text (counterparty ${short(existing.counterparty_wallet)}). ` +
+            "The id is derived from your address and the text only, so the same text cannot be opened twice. " +
+            "Change the wording to bind a different counterparty.",
+        });
+        return;
+      }
+    }
+
     await runWrite(
       "open_undertaking",
-      [counterparty.trim(), label.trim(), text.trim()],
+      [submittedWallet, submittedLabel, submittedText],
       id,
-      (next) => next.undertaking_id === id
+      expectedNewUndertaking({
+        id,
+        account,
+        wallet: submittedWallet,
+        label: submittedLabel,
+        text: submittedText,
+      })
     );
   }
 
   async function accede() {
     if (!record) return;
+    // Receipt success is the first gate; this predicate proves the caller-specific post-state.
     await runWrite("accede", [record.undertaking_id], record.undertaking_id, (next) =>
-      next.state === "EFFECTIVE" && Boolean(next.acceded_by)
+      next.state === "EFFECTIVE" && next.acceded_by.toLowerCase() === account.toLowerCase()
     );
   }
 
   async function decline() {
     if (!record) return;
+    // Receipt success is the first gate; this predicate proves the deterministic post-state.
     await runWrite("decline", [record.undertaking_id], record.undertaking_id, (next) =>
-      next.state === "DECLINED"
+      next.state === "DECLINED" && next.acceded_by === ""
     );
   }
 
@@ -274,6 +297,7 @@ export default function App() {
     if (!contest.trim() || contest.trim().length > MAX_NOTE_LENGTH) {
       return setTx({ kind: "error", message: `Contest note must be 1–${MAX_NOTE_LENGTH} characters.` });
     }
+    // Receipt success is the first gate; this predicate cannot rescue a rolled-back repeat.
     await runWrite(
       "contest",
       [record.undertaking_id, contest.trim()],
@@ -481,10 +505,19 @@ function Status({ label, tone }: { label: string; tone: string }) {
 
 function TxBanner({ tx, txUrl }: { tx: TxState; txUrl: string }) {
   if (tx.kind === "idle") return null;
+  const duplicateRollback = tx.kind === "error" && Boolean(tx.hash) && tx.message.includes("Undertaking already exists");
   return (
     <section className={`tx-banner ${tx.kind}`}>
       {tx.kind === "signing" || tx.kind === "submitted" ? <LoaderCircle className="spin" size={18} /> : tx.kind === "success" ? <CheckCircle2 size={18} /> : <CircleAlert size={18} />}
-      <p>{tx.message}</p>
+      {tx.kind === "error" && tx.hash ? (
+        <div className="tx-failure">
+          <strong>Why this failed</strong>
+          <p>{tx.message}</p>
+          {duplicateRollback && (
+            <small>The id is derived from your address and the text only. Opening the same text again — even for a different counterparty — is a duplicate.</small>
+          )}
+        </div>
+      ) : <p>{tx.message}</p>}
       {txUrl && <a href={txUrl} target="_blank" rel="noreferrer">Explorer <ExternalLink size={14} /></a>}
     </section>
   );
