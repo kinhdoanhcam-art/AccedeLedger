@@ -28,3 +28,10 @@ No contract change; address and SHA-256 remain unchanged.
 - Contract: `0x043F8e52461165BEfe5b8fE66F1de8F4F0C92C35`
 - Contract SHA-256: `6a0442d9156d99dbf7471ba5aa08f1428b7b3746d25f57df6c2a2beeb212ab28`
 - Contract redeployment required: **No**
+
+### Hosted runtime validation
+
+- Fresh open: `0xa5d03189eee93e36a03d26412cd235d6adacf7efdd8ca6eaa5a9e4232c5bdd85`
+- Duplicate rollback: `0x0d75300ca34035ead49b084a8836b84151cc6e12bf8811f5f79021e4bd53211e`
+- Accede: `0x6ef8d021f275bce68bccd9e7909db3195cfe10169a241af64d058a781d01568a`
+- Verified accepted post-state: `EFFECTIVE`, with `0x5a52d040581A76e2C032542855D31480f2ea7097` in `acceded_by`.

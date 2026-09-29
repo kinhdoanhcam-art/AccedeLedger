@@ -59,14 +59,19 @@ For Vercel, keep the default Project address or set `VITE_CONTRACT_ADDRESS` to t
 
 ## Runtime status
 
-The fresh deployment, `get_limits` identity read, hosted integration, and the main Project write path are confirmed on StudioNet.
+The hosted receipt-verification patch and its intended post-state are confirmed on StudioNet.
 
-- Proven undertaking ID: `1d55c5df9cd29468073570b55d779a41943d982c4d91430effce94a9d47df8d6`
-- Semantic outcome: `BINDS_OUTSIDE`
-- Final state: `EFFECTIVE`
+- Undertaking ID: `5eebfa18f2c8376119d203b58b2d247c45e6b5dec69f491ba99f66f8248ceb14`
 - Author: `0x3065E31B1D993d7C0D59E6786844cBa56780B2d3`
 - Named counterparty / acceded by: `0x5a52d040581A76e2C032542855D31480f2ea7097`
-- Verified performance count: `1`
-- Performance transaction: <https://explorer-studio.genlayer.com/tx/0x9b10ec6a9395fc2fee910818b6d01e77abc076f0528bec7e384369a8cfa468c4>
+- Counterparty label: `Supplier A`
+- Text: `The Supplier shall deliver the signed inspection report for batch AL-20260929-A before final acceptance.`
+- Semantic outcome: `BINDS_OUTSIDE`
+- Final accepted state: `EFFECTIVE`
+- Open transaction: <https://explorer-studio.genlayer.com/tx/0xa5d03189eee93e36a03d26412cd235d6adacf7efdd8ca6eaa5a9e4232c5bdd85>
+- Duplicate rollback: <https://explorer-studio.genlayer.com/tx/0x0d75300ca34035ead49b084a8836b84151cc6e12bf8811f5f79021e4bd53211e>
+- Accede transaction: <https://explorer-studio.genlayer.com/tx/0x6ef8d021f275bce68bccd9e7909db3195cfe10169a241af64d058a781d01568a>
 
-Explorer reports consensus `Accepted`, GenVM `SUCCESS`, and `Finalized` for `record_performance`; the hosted accepted-state read independently shows `EFFECTIVE`, the correct `acceded_by` wallet, and `performance_count=1`. See `TESTING.md` for the concise read-only reviewer path.
+The duplicate used the same author and text but changed the counterparty to `0xADE4…aD1D` and label to `Supplier B`. Explorer reports GenVM `ERROR`, result code `Rollback`, and `Undertaking already exists`; the interface reports that exact reason while retaining the accepted `Supplier A` record. The subsequent `accede` call reports GenVM `SUCCESS`, and an independent accepted-state read shows `EFFECTIVE` with the named counterparty in `acceded_by`.
+
+An earlier live record also confirms the performance path: undertaking `1d55c5df9cd29468073570b55d779a41943d982c4d91430effce94a9d47df8d6` has `performance_count=1`, backed by <https://explorer-studio.genlayer.com/tx/0x9b10ec6a9395fc2fee910818b6d01e77abc076f0528bec7e384369a8cfa468c4>. See `TESTING.md` for the concise read-only reviewer path.

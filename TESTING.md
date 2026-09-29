@@ -57,29 +57,35 @@ The verifier was temporarily restored to its previous state-first behavior toget
 - Explorer result: consensus `Accepted`, GenVM `SUCCESS`, result code `Return`, lifecycle `Finalized`
 The Explorer execution result and the separately refreshed accepted-state read establish both execution success and the intended postconditions.
 
-## Live verification required for this interface patch
+## Completed hosted interface-patch proof
 
-The deterministic patch tests are complete. The following live run is intentionally marked **PENDING** until wallet-signed transactions and screenshots are supplied. Use a new undertaking text that has never been opened by the author on this contract.
+The patched hosted interface was exercised with wallet-signed StudioNet transactions on 2026-09-29. The exact fresh text was:
 
-| # | Wallet | Action | Expected result | Evidence status |
+`The Supplier shall deliver the signed inspection report for batch AL-20260929-A before final acceptance.`
+
+It produced undertaking ID `5eebfa18f2c8376119d203b58b2d247c45e6b5dec69f491ba99f66f8248ceb14` for author `0x3065E31B1D993d7C0D59E6786844cBa56780B2d3`.
+
+| # | Wallet | Action | Verified result | Evidence |
 |---|---|---|---|---|
-| 1 | author | Open for cpA with label `Supplier A` and fresh text T | Receipt success; UI says `Transaction succeeded and the new record matches what was submitted.` | Transaction hash + ID: **PENDING** |
-| 2 | author | Attempt the same text T for cpB while `VITE_ALLOW_DUPLICATE_SEND=0` | Preflight blocks submission and explains that author + text determine the ID | Screenshot 1; no transaction by design: **PENDING** |
-| 3 | author | On a temporary build with `VITE_ALLOW_DUPLICATE_SEND=1`, add `?duplicate-proof=1` to the URL and submit the same text T for cpB | Receipt rollback; UI says `Transaction rolled back: Undertaking already exists`; loaded record still shows cpA | Reverted transaction hash + screenshot 2: **PENDING** |
-| 4 | cpA | Accede to the undertaking from step 1 | Receipt success; state `EFFECTIVE`; `acceded_by=cpA` | Transaction hash: **PENDING** |
+| 1 | author | Open for cpA `0x5a52…7097`, label `Supplier A`, and fresh text T | Receipt success; `BINDS_OUTSIDE`; state `AWAITING_ACCESSION`; complete submitted record matched | [Open transaction](https://explorer-studio.genlayer.com/tx/0xa5d03189eee93e36a03d26412cd235d6adacf7efdd8ca6eaa5a9e4232c5bdd85) |
+| 2 | author | Attempt the same text T for cpB while the normal preflight is active | Submission blocked; UI explains that author + text determine the ID | Hosted UI capture; no transaction by design |
+| 3 | author | In temporary evidence mode, submit the same text T for cpB `0xADE4…aD1D`, label `Supplier B` | GenVM `ERROR`; `Rollback`; reason `Undertaking already exists`; UI retains the accepted cpA / `Supplier A` record | [Rollback transaction](https://explorer-studio.genlayer.com/tx/0x0d75300ca34035ead49b084a8836b84151cc6e12bf8811f5f79021e4bd53211e) |
+| 4 | cpA | Accede to the undertaking from step 1 | GenVM `SUCCESS`; accepted state `EFFECTIVE`; `acceded_by=0x5a52…7097` | [Accede transaction](https://explorer-studio.genlayer.com/tx/0x6ef8d021f275bce68bccd9e7909db3195cfe10169a241af64d058a781d01568a) plus refreshed accepted-state read |
 
-This is a four-checkpoint run but only three transaction submissions: checkpoint 2 must be blocked before a transaction exists. A temporary evidence build may set `VITE_ALLOW_DUPLICATE_SEND=1`; use its normal URL for checkpoint 2 and the same URL with `?duplicate-proof=1` for checkpoint 3. Return the public deployment to `VITE_ALLOW_DUPLICATE_SEND=0` after capture.
+This was a four-checkpoint run but only three transaction submissions: checkpoint 2 was blocked before a transaction existed. The duplicate transaction proves that the interface distinguishes a contract rollback from wallet rejection or RPC failure and does not let the stale accepted record prove success.
 
-## What this run does not prove
+## Evidence boundary
 
-- Local tests do not prove that a new StudioNet transaction reached consensus or that the hosted deployment contains this patch.
-- The older completed runtime record proves the frozen contract's main state transition, not the new duplicate-reporting interface path.
-- Until the PENDING table above is completed, the rollback wording, transaction hash, and stale-record display remain unverified on the hosted frontend.
+- The new run proves the hosted duplicate-reporting path and the accession post-state.
+- It does not add a performance record or contest to the new undertaking.
+- The older completed record above separately proves the performance path with `performance_count=1`.
+- The temporary evidence switch must be returned to `VITE_ALLOW_DUPLICATE_SEND=0` for the normal public deployment.
 
 ## Read-only reviewer path
 
 1. Open <https://accede-ledger.vercel.app/> and confirm StudioNet `61999` and the Project address ending in `C92C35`.
-2. Paste `1d55c5df9cd29468073570b55d779a41943d982c4d91430effce94a9d47df8d6` into **Undertaking ID** and press **Load**. No wallet is required.
-3. Confirm `BINDS_OUTSIDE`, `EFFECTIVE`, author `0x3065…B2d3`, counterparty and `acceded_by` `0x5a52…a7097`.
-4. Confirm `PERFORMANCE RECORDS` is `1` and the ledger contains `First weekly report received.`
-5. Open the transaction link above and verify method `record_performance`, consensus `Accepted`, GenVM `SUCCESS`, and lifecycle `Finalized`.
+2. Paste `5eebfa18f2c8376119d203b58b2d247c45e6b5dec69f491ba99f66f8248ceb14` into **Undertaking ID** and press **Load**. No wallet is required.
+3. Confirm label `Supplier A`, `BINDS_OUTSIDE`, `EFFECTIVE`, author `0x3065…B2d3`, and counterparty / `acceded_by` `0x5a52…a7097`.
+4. Open the duplicate rollback link and verify `open_undertaking`, cpB / `Supplier B`, GenVM `ERROR`, result code `Rollback`, and `Undertaking already exists`.
+5. Open the Accede link and verify method `accede`, consensus `Accepted`, GenVM `SUCCESS`, and result code `Return`.
+6. Optionally load the older undertaking `1d55c5df9cd29468073570b55d779a41943d982c4d91430effce94a9d47df8d6` to inspect the separately proven performance record.
