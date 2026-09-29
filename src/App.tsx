@@ -245,6 +245,10 @@ export default function App() {
         });
         return;
       }
+    } else {
+      // Evidence mode intentionally submits the duplicate, but keeps the
+      // accepted record visible. Receipt verification still decides failure.
+      await readRecord(id, false).catch(() => undefined);
     }
 
     await runWrite(

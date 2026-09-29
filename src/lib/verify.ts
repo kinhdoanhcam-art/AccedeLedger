@@ -53,6 +53,13 @@ export function txOutcomeFromTransaction(tx: any): TxOutcome {
     leader?.message,
     leader?.return_data,
     leader?.returnData,
+    // Current genlayer-js decodes a rollback result into
+    // { status: "rollback", payload: "<contract reason>" }.
+    leader?.result?.payload,
+    leader?.result?.error,
+    leader?.result?.message,
+    leader?.genvm_result?.payload,
+    leader?.genvmResult?.payload,
   ]) {
     if (typeof field === "string" && field.trim()) {
       return { status: "error", reason: field.trim() };

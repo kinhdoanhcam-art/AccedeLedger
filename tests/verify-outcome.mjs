@@ -84,6 +84,19 @@ await test("R0 authoritative receipt parsing", async () => {
     }),
     { status: "error", reason: "Undertaking already exists" }
   );
+  assert.deepEqual(
+    txOutcomeFromTransaction({
+      consensus_data: {
+        leader_receipt: [{
+          mode: "LEADER",
+          execution_result: "ERROR",
+          result: { status: "rollback", payload: "Undertaking already exists" },
+        }],
+      },
+    }),
+    { status: "error", reason: "Undertaking already exists" },
+    "current genlayer-js decoded rollback shape"
+  );
 });
 
 await test("R1 duplicate rollback rejects the stale different-counterparty record", async () => {
