@@ -1,512 +1,532 @@
-import { useCallback, useEffect, useState } from "react";
-import { CONTRACT_ADDRESS, EXPLORER_BASE } from "./lib/config";
-import { calldataBytes, CALLDATA_LIMIT } from "./lib/calldata";
-import { errorMessage } from "./lib/errors";
+import { useEffect, useMemo, useState } from "react";
 import {
-  connectedWallet,
-  ensureStudioNet,
-  getFailures,
-  getStatement,
-  requestWallet,
-  sendWrite,
-  waitForVerdict,
-} from "./lib/genlayer";
-import { short, statementId } from "./lib/ids";
-import { pyLen, pyStrip } from "./lib/pytext";
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  CircleAlert,
+  Clipboard,
+  ExternalLink,
+  FilePlus2,
+  Fingerprint,
+  Gavel,
+  History,
+  LoaderCircle,
+  RefreshCw,
+  ShieldCheck,
+  UserCheck,
+  Wallet,
+} from "lucide-react";
 import {
-  acceptBlock,
-  answerBlock,
-  challengeBlock,
-  defaultAnswerIndex,
+  CONTRACT_ADDRESS,
+  CONTRACT_EXPLORER_URL,
+  EXPLORER_BASE,
   MAX_LABEL_LENGTH,
   MAX_NOTE_LENGTH,
   MAX_TEXT_LENGTH,
-  NO_CLOSING_STATE,
-  recordBlock,
-  remedyLine,
-  reportBlock,
-} from "./lib/rules";
-import type { FailureReport, Statement, TxStatus } from "./lib/types";
-import { acceptVerified, answerVerified, challengeVerified, recordVerified, reportVerified } from "./lib/verify";
+  SOURCE_SHA256,
+  STUDIONET_CHAIN_ID,
+} from "./lib/config";
+import { errorMessage } from "./lib/errors";
+import {
+  connectStudioNet,
+  connectedWallet,
+  getContestNote,
+  getLimits,
+  getPerformances,
+  getUndertaking,
+  readOutcome,
+  requestWallet,
+  writeContract,
+} from "./lib/genlayer";
+import { normalizeId, pyStrip, short, undertakingId, validId } from "./lib/id";
+import type { Limits, Performance, TxState, Undertaking } from "./lib/types";
+import { decideWrite, expectedNewUndertaking } from "./lib/verify";
 
-type Loaded = { s: Statement; reports: FailureReport[] };
-type Tab = "ledger" | "record" | "compare";
-type Action = "challenge" | "report" | "accept" | "answer";
+type View = "ledger" | "open" | "protocol";
 
-const RECENT_KEY = "asattoday.recent";
-
-function readRecent(): string[] {
-  try {
-    const raw = JSON.parse(window.localStorage.getItem(RECENT_KEY) ?? "[]");
-    return Array.isArray(raw) ? raw.filter((x) => typeof x === "string").slice(0, 8) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecent(list: string[]) {
-  try {
-    window.localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8)));
-  } catch {
-    /* storage unavailable: the recent list is a convenience only */
-  }
-}
-
-function cleanId(value: string): string {
-  return pyStrip(value).toLowerCase().replace(/^0x/, "");
-}
-
-const validId = (v: string) => /^[0-9a-f]{64}$/.test(cleanId(v));
-
-async function load(id: string): Promise<Loaded | null> {
-  const s = await getStatement(id);
-  if (!s) return null;
-  return { s, reports: s.kind === "UNDERTAKING" ? await getFailures(id) : [] };
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function Meter({ bytes }: { bytes: number }) {
-  return (
-    <span className={bytes > CALLDATA_LIMIT ? "meter over" : "meter"} title="GenLayer calldata; the RPC rejects more than 255 bytes">
-      {bytes}/{CALLDATA_LIMIT} B
-    </span>
-  );
-}
-
-const KIND_TITLE: Record<string, string> = {
-  ASSERTION: "Asserted as at today",
-  UNDERTAKING: "Promised for later",
+const EMPTY_TX: TxState = {
+  kind: "idle",
+  message: "No transaction submitted in this session.",
 };
 
-type CardProps = {
-  data: Loaded;
-  me: string;
-  busy: boolean;
-  onAction: (action: Action, before: Loaded, index: number, note: string) => Promise<void>;
-};
+const ALLOW_DUPLICATE_SEND =
+  import.meta.env.VITE_ALLOW_DUPLICATE_SEND === "1" &&
+  new URLSearchParams(window.location.search).get("duplicate-proof") === "1";
 
-function StatementCard({ data, me, busy, onAction }: CardProps) {
-  const { s, reports } = data;
-  const [note, setNote] = useState("");
-  const [answerIndex, setAnswerIndex] = useState(() => defaultAnswerIndex(s, reports));
+function stateTone(value: string) {
+  if (value === "EFFECTIVE") return "good";
+  if (value === "DECLINED") return "bad";
+  return "waiting";
+}
 
-  useEffect(() => {
-    setAnswerIndex(defaultAnswerIndex(s, reports));
-  }, [s, reports]);
-
-  const wallet = me || "0x" + "0".repeat(40);
-  const reasons: Record<Action, string | null> = {
-    challenge: challengeBlock(s, wallet, note),
-    report: reportBlock(s, wallet, note),
-    accept: acceptBlock(s, wallet),
-    answer: answerBlock(s, reports, wallet, answerIndex, note),
-  };
-  const role = !me ? "not connected" : me === s.author ? "you are the author" : me === s.other_wallet ? "you are the other side" : "you are neither side";
-  const kindClass = s.kind === "ASSERTION" ? "assertion" : "undertaking";
-  const noteBytes = calldataBytes("answer", [s.statement_id, 30, pyStrip(note)]);
-
-  async function act(action: Action) {
-    await onAction(action, data, answerIndex, note);
-    setNote("");
-  }
-
-  const buttons: { action: Action; label: string; cls: string }[] = [
-    { action: "challenge", label: "Challenge", cls: "btn-challenge" },
-    { action: "report", label: "Report failure", cls: "btn-report" },
-    { action: "accept", label: "Accept", cls: "btn-accept" },
-    { action: "answer", label: s.kind === "ASSERTION" ? "Answer" : `Answer report #${answerIndex}`, cls: "btn-answer" },
-  ];
-
-  return (
-    <article className={`card card-${kindClass}`}>
-      <header className="card-head">
-        <span className={`kind kind-${kindClass}`}>{KIND_TITLE[s.kind] ?? s.kind}</span>
-        <span className={`chip-state state-${s.state.toLowerCase()}`}>{s.state}</span>
-      </header>
-      <p className={`remedy remedy-${kindClass}`}>{remedyLine(s)}</p>
-      <blockquote>{s.text}</blockquote>
-      <p className="meta">
-        <code>{s.outcome}</code> · <code>{s.kind}</code> · contract remedy: “{s.remedy}” · remaining {s.remaining}
-      </p>
-      <p className="meta">
-        id <code>{s.statement_id}</code>
-        <br />author <code>{short(s.author)}</code> · other side <code>{short(s.other_wallet)}</code> ({s.other_label}) · {role}
-      </p>
-
-      {s.kind === "ASSERTION" ? (
-        <div className="cells">
-          <div className={s.challenge_note ? "cell filled" : "cell blank"}>
-            <h4>Challenge</h4>
-            <p>{s.challenge_note ? `“${s.challenge_note}”` : "— empty —"}</p>
-          </div>
-          <div className={s.answer_note ? "cell filled" : "cell blank"}>
-            <h4>Author's answer</h4>
-            <p>{s.answer_note ? `“${s.answer_note}”` : "— empty —"}</p>
-          </div>
-        </div>
-      ) : (
-        <div className="reports">
-          <h4>Failure reports</h4>
-          {reports.length === 0 ? (
-            <p className="empty-line">— none yet —</p>
-          ) : (
-            <ol>
-              {reports.map((r) => (
-                <li key={r.index}>
-                  <span className="r-n">#{r.index}</span>
-                  <span className="r-note">“{r.note}”</span>
-                  <span className="r-answer">{r.answer ? `Author: “${r.answer}”` : "no answer yet"}</span>
-                </li>
-              ))}
-            </ol>
-          )}
-          <p className="no-close">{NO_CLOSING_STATE}</p>
-        </div>
-      )}
-
-      <div className="act">
-        <div className="act-inputs">
-          <input value={note} maxLength={MAX_NOTE_LENGTH * 2} placeholder="Note (challenge, report or answer)" onChange={(e) => setNote(e.target.value)} />
-          {s.kind === "UNDERTAKING" && (
-            <label className="idx">Answer report
-              <select value={answerIndex} onChange={(e) => setAnswerIndex(Number(e.target.value))}>
-                {(reports.length ? reports.map((r) => r.index) : [1]).map((n) => <option key={n} value={n}>#{n}</option>)}
-              </select>
-            </label>
-          )}
-          <small>{pyLen(pyStrip(note))}/{MAX_NOTE_LENGTH} · <Meter bytes={noteBytes} /></small>
-        </div>
-        <div className="act-grid">
-          {buttons.map((b) => (
-            <div key={b.action} className="act-cell">
-              <button className={b.cls} disabled={busy || reasons[b.action] !== null || noteBytes > CALLDATA_LIMIT} onClick={() => act(b.action)}>{b.label}</button>
-              {reasons[b.action] && <span className="why">{reasons[b.action]}</span>}
-            </div>
-          ))}
-        </div>
-      </div>
-    </article>
-  );
+function copyText(value: string) {
+  return navigator.clipboard.writeText(value);
 }
 
 export default function App() {
-  const [me, setMe] = useState("");
-  const [tab, setTab] = useState<Tab>("ledger");
-  const [tx, setTx] = useState<TxStatus>({ phase: "idle", message: "" });
-  const [pendingHash, setPendingHash] = useState("");
-  const [recent, setRecent] = useState<string[]>(readRecent);
+  const [view, setView] = useState<View>("ledger");
+  const [account, setAccount] = useState("");
+  const [limits, setLimits] = useState<Limits | null>(null);
+  const [protocolError, setProtocolError] = useState("");
 
-  // record form
-  const [other, setOther] = useState("");
+  const [idInput, setIdInput] = useState("");
+  const [record, setRecord] = useState<Undertaking | null>(null);
+  const [performances, setPerformances] = useState<Performance[]>([]);
+  const [contestNote, setContestNote] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tx, setTx] = useState<TxState>(EMPTY_TX);
+
+  const [counterparty, setCounterparty] = useState("");
   const [label, setLabel] = useState("");
   const [text, setText] = useState("");
-  const [exists, setExists] = useState(false);
-
-  // one statement
-  const [idInput, setIdInput] = useState("");
-  const [current, setCurrent] = useState<Loaded | null>(null);
-
-  // side by side
-  const [leftId, setLeftId] = useState("");
-  const [rightId, setRightId] = useState("");
-  const [pair, setPair] = useState<[Loaded | null, Loaded | null]>([null, null]);
-
-  const busy = ["checking", "signing", "submitted"].includes(tx.phase) || pendingHash !== "";
+  const [note, setNote] = useState("");
+  const [contest, setContest] = useState("");
 
   useEffect(() => {
-    connectedWallet().then(setMe).catch(() => undefined);
-    window.ethereum?.on?.("accountsChanged", (a: string[]) => setMe((a?.[0] ?? "").toLowerCase()));
-  }, []);
+    connectedWallet().then(setAccount).catch(() => undefined);
+    getLimits()
+      .then(setLimits)
+      .catch((error) => setProtocolError(errorMessage(error)));
 
-  const remember = useCallback((id: string) => {
-    setRecent((prev) => {
-      const next = [id, ...prev.filter((x) => x !== id)];
-      saveRecent(next);
-      return next;
-    });
-  }, []);
-
-  const localId = me && pyStrip(text) ? statementId(me, text) : "";
-
-  useEffect(() => {
-    let cancelled = false;
-    setExists(false);
-    if (!localId || !CONTRACT_ADDRESS) return;
-    const t = setTimeout(() => {
-      getStatement(localId).then((s) => !cancelled && setExists(!!s)).catch(() => undefined);
-    }, 300);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
+    if (!window.ethereum?.on) return;
+    const onAccounts = (accounts: string[]) => {
+      setAccount(accounts?.[0] ?? "");
+      setTx({ kind: "idle", message: "Wallet changed. Reload state before writing." });
     };
-  }, [localId]);
+    const onChain = () => {
+      setRecord(null);
+      setPerformances([]);
+      setContestNote("");
+      setTx({ kind: "idle", message: "Network changed. Load the undertaking again." });
+    };
+    window.ethereum.on("accountsChanged", onAccounts as any);
+    window.ethereum.on("chainChanged", onChain as any);
+    return () => {
+      window.ethereum?.removeListener?.("accountsChanged", onAccounts as any);
+      window.ethereum?.removeListener?.("chainChanged", onChain as any);
+    };
+  }, []);
 
-  const recordReason = me ? recordBlock({ me, otherWallet: other, label, text, exists }) : "Connect a wallet first";
-  const recordBytes = calldataBytes("record_statement", [pyStrip(other) || "0x" + "0".repeat(40), pyStrip(label), pyStrip(text)]);
+  const roles = useMemo(() => {
+    const wallet = account.toLowerCase();
+    return {
+      creator: Boolean(record && wallet && record.creator.toLowerCase() === wallet),
+      counterparty: Boolean(
+        record && wallet && record.counterparty_wallet.toLowerCase() === wallet
+      ),
+    };
+  }, [account, record]);
 
   async function connect() {
     try {
-      const w = await requestWallet();
-      await ensureStudioNet();
-      setMe(w);
-    } catch (e) {
-      setTx({ phase: "error", message: errorMessage(e) });
+      const wallet = await requestWallet();
+      await connectStudioNet();
+      setAccount(wallet);
+      setTx({ kind: "success", message: "Wallet connected to StudioNet." });
+    } catch (error) {
+      setTx({ kind: "error", message: errorMessage(error) });
     }
   }
 
-  /** Reload every card that shows this id; return the fresh copy. */
-  async function refresh(id: string): Promise<Loaded | null> {
-    const next = await load(id);
-    setCurrent((c) => (c && c.s.statement_id === id ? next : c));
-    setPair(([a, b]) => [a && a.s.statement_id === id ? next : a, b && b.s.statement_id === id ? next : b]);
+  async function readRecord(id: string, announce = true): Promise<Undertaking> {
+    const normalized = normalizeId(id);
+    if (!validId(normalized)) throw new Error("Enter a valid 64-character undertaking ID.");
+    const next = await getUndertaking(normalized);
+    const [nextPerformances, nextContest] = await Promise.all([
+      getPerformances(normalized),
+      getContestNote(normalized),
+    ]);
+    setIdInput(normalized);
+    setRecord(next);
+    setPerformances(nextPerformances);
+    setContestNote(nextContest);
+    if (announce) setTx({ kind: "success", message: "Accepted on-chain state loaded." });
     return next;
   }
 
-  async function loadById(raw: string) {
-    const id = cleanId(raw);
-    if (!validId(id)) {
-      setTx({ phase: "error", message: "Enter a 64-character statement id." });
-      return;
-    }
-    setTx({ phase: "idle", message: "" });
-    setIdInput(id);
-    const next = await load(id);
-    setCurrent(next);
-    if (!next) setTx({ phase: "error", message: "No statement with this id on this deployment." });
-    else remember(id);
-  }
-
-  async function loadPair() {
-    const a = cleanId(leftId);
-    const b = cleanId(rightId);
-    setPair([validId(a) ? await load(a) : null, validId(b) ? await load(b) : null]);
-  }
-
-  /** Receipt first, then the postcondition on reloaded accepted state. */
-  async function runWrite(what: string, send: () => Promise<string>, verified: () => Promise<boolean>) {
-    let hash = "";
+  async function loadRecord() {
+    setLoading(true);
     try {
-      setTx({ phase: "signing", message: `${what}: confirm in your wallet…` });
-      hash = await send();
-      setPendingHash(hash);
-      setTx({ phase: "submitted", message: `${what}: submitted, waiting for the leader receipt…`, hash });
-      await finish(what, hash, verified);
-    } catch (e) {
-      setTx({ phase: "error", message: errorMessage(e), hash: hash || undefined });
-      setPendingHash("");
+      await readRecord(idInput);
+    } catch (error) {
+      setTx({ kind: "error", message: errorMessage(error) });
+      setRecord(null);
+      setPerformances([]);
+      setContestNote("");
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function finish(what: string, hash: string, verified: () => Promise<boolean>) {
-    const verdict = await waitForVerdict(hash);
-    if (verdict.kind === "pending") {
-      setTx({ phase: "delayed", message: "Submitted — confirmation delayed. Do not resend; check again in a moment.", hash });
+  async function verifyWrite(
+    hash: string,
+    id: string,
+    accepted: (next: Undertaking) => boolean
+  ) {
+    const decision = await decideWrite({
+      hash,
+      readOutcome,
+      readRecord: () => readRecord(id, false),
+      accepted,
+    });
+    setTx({ ...decision, hash });
+
+    // Refresh a stale record only for display after a rollback. decideWrite has
+    // already rejected the receipt and never uses this state as success proof.
+    if (decision.kind === "error" && decision.message.startsWith("Transaction rolled back:")) {
+      await readRecord(id, false).catch(() => undefined);
+    }
+  }
+
+  async function runWrite(
+    method: string,
+    args: unknown[],
+    id: string,
+    accepted: (next: Undertaking) => boolean
+  ) {
+    if (!account) {
+      setTx({ kind: "error", message: "Connect a wallet first." });
       return;
     }
-    if (verdict.kind === "error") {
-      setPendingHash("");
-      setTx({ phase: "error", message: `${what} reverted: ${verdict.reason}`, hash });
-      return;
+    if (busy) return;
+    setBusy(true);
+    setTx({ kind: "signing", message: "Confirm the transaction in MetaMask." });
+    try {
+      await connectStudioNet();
+      const hash = await writeContract(account, method, args);
+      setIdInput(id);
+      setView("ledger");
+      setTx({
+        kind: "submitted",
+        hash,
+        message: "Submitted. Waiting for consensus and accepted-state proof.",
+      });
+      await verifyWrite(hash, id, accepted);
+    } catch (error) {
+      setTx({ kind: "error", message: errorMessage(error) });
+    } finally {
+      setBusy(false);
     }
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      if (await verified()) {
-        setPendingHash("");
-        setTx({ phase: "success", message: `${what}: executed, and the accepted state shows the change.`, hash });
+  }
+
+  async function openUndertaking() {
+    if (!account) return setTx({ kind: "error", message: "Connect the author wallet first." });
+    const submittedWallet = counterparty.trim().toLowerCase();
+    const submittedLabel = pyStrip(label);
+    const submittedText = pyStrip(text);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(submittedWallet)) {
+      return setTx({ kind: "error", message: "Enter a valid counterparty wallet." });
+    }
+    if (!submittedLabel || [...submittedLabel].length > MAX_LABEL_LENGTH) {
+      return setTx({ kind: "error", message: `Counterparty label must be 1–${MAX_LABEL_LENGTH} characters.` });
+    }
+    if (!submittedText || [...submittedText].length > MAX_TEXT_LENGTH) {
+      return setTx({ kind: "error", message: `Undertaking text must be 1–${MAX_TEXT_LENGTH} characters.` });
+    }
+    const id = undertakingId(account, text);
+
+    if (!ALLOW_DUPLICATE_SEND) {
+      const existing = await getUndertaking(id).catch(() => null);
+      if (existing?.undertaking_id === id) {
+        setIdInput(id);
+        setView("ledger");
+        await readRecord(id, false).catch(() => {
+          setRecord(existing);
+          setPerformances([]);
+          setContestNote("");
+        });
+        setTx({
+          kind: "error",
+          message:
+            `You already opened an undertaking with this exact text (counterparty ${short(existing.counterparty_wallet)}). ` +
+            "The id is derived from your address and the text only, so the same text cannot be opened twice. " +
+            "Change the wording to bind a different counterparty.",
+        });
         return;
       }
-      await sleep(3000);
-    }
-    setPendingHash("");
-    setTx({ phase: "error", message: `${what}: the receipt reports success but the accepted state does not show the expected change yet. Reload before acting again.`, hash });
-  }
-
-  async function checkAgain() {
-    if (!pendingHash) return;
-    setTx({ phase: "submitted", message: "Checking the receipt again…", hash: pendingHash });
-    await finish("Pending transaction", pendingHash, async () => true);
-  }
-
-  async function onRecord() {
-    if (!me || !localId) return;
-    setTx({ phase: "checking", message: "Checking the accepted state before sending…" });
-    const already = !!(await getStatement(localId));
-    const reason = recordBlock({ me, otherWallet: other, label, text, exists: already });
-    if (reason) {
-      setExists(already);
-      setTx({ phase: "error", message: reason });
-      return;
-    }
-    if (recordBytes > CALLDATA_LIMIT) {
-      setTx({ phase: "error", message: `Calldata is ${recordBytes} bytes; the RPC rejects more than ${CALLDATA_LIMIT}. Shorten the text.` });
-      return;
-    }
-    const sub = { me, otherWallet: pyStrip(other).toLowerCase(), label, text, statementId: localId };
-    await runWrite(
-      "Record statement",
-      () => sendWrite(me, "record_statement", [sub.otherWallet, pyStrip(label), pyStrip(text)]),
-      async () => recordVerified(await getStatement(sub.statementId), sub),
-    );
-    remember(sub.statementId);
-    setIdInput(sub.statementId);
-    setText("");
-    setTab("ledger");
-    setCurrent(await load(sub.statementId));
-  }
-
-  async function onAction(action: Action, before: Loaded, index: number, note: string) {
-    const id = before.s.statement_id;
-    const n = pyStrip(note);
-    if (action === "challenge") {
-      await runWrite("Challenge", () => sendWrite(me, "challenge", [id, n]), async () => challengeVerified((await refresh(id))?.s ?? null, n));
-    } else if (action === "report") {
-      await runWrite("Report failure", () => sendWrite(me, "report_failure", [id, n]), async () => {
-        const next = await refresh(id);
-        return !!next && reportVerified(before.s, next.s, next.reports, n);
-      });
-    } else if (action === "accept") {
-      await runWrite("Accept", () => sendWrite(me, "accept_statement", [id]), async () => acceptVerified((await refresh(id))?.s ?? null));
     } else {
-      await runWrite(index === 0 ? "Answer the challenge" : `Answer report #${index}`, () => sendWrite(me, "answer", [id, index, n]), async () => {
-        const next = await refresh(id);
-        return !!next && answerVerified(before.s, next.s, next.reports, index, n);
-      });
+      // Evidence mode intentionally submits the duplicate, but keeps the
+      // accepted record visible. Receipt verification still decides failure.
+      await readRecord(id, false).catch(() => undefined);
     }
-    await refresh(id);
+
+    await runWrite(
+      "open_undertaking",
+      [submittedWallet, submittedLabel, submittedText],
+      id,
+      expectedNewUndertaking({
+        id,
+        account,
+        wallet: submittedWallet,
+        label: submittedLabel,
+        text: submittedText,
+      })
+    );
   }
 
-  const TABS: [Tab, string][] = [["ledger", "Ledger"], ["record", "Record"], ["compare", "Side by side"]];
+  async function accede() {
+    if (!record) return;
+    // Receipt success is the first gate; this predicate proves the caller-specific post-state.
+    await runWrite("accede", [record.undertaking_id], record.undertaking_id, (next) =>
+      next.state === "EFFECTIVE" && next.acceded_by.toLowerCase() === account.toLowerCase()
+    );
+  }
+
+  async function decline() {
+    if (!record) return;
+    // Receipt success is the first gate; this predicate proves the deterministic post-state.
+    await runWrite("decline", [record.undertaking_id], record.undertaking_id, (next) =>
+      next.state === "DECLINED" && next.acceded_by === ""
+    );
+  }
+
+  async function recordPerformance() {
+    if (!record) return;
+    if (!note.trim() || note.trim().length > MAX_NOTE_LENGTH) {
+      return setTx({ kind: "error", message: `Performance note must be 1–${MAX_NOTE_LENGTH} characters.` });
+    }
+    const before = record.performance_count;
+    await runWrite(
+      "record_performance",
+      [record.undertaking_id, note.trim()],
+      record.undertaking_id,
+      (next) => next.performance_count === before + 1
+    );
+    setNote("");
+  }
+
+  async function contestUndertaking() {
+    if (!record) return;
+    if (!contest.trim() || contest.trim().length > MAX_NOTE_LENGTH) {
+      return setTx({ kind: "error", message: `Contest note must be 1–${MAX_NOTE_LENGTH} characters.` });
+    }
+    // Receipt success is the first gate; this predicate cannot rescue a rolled-back repeat.
+    await runWrite(
+      "contest",
+      [record.undertaking_id, contest.trim()],
+      record.undertaking_id,
+      (next) => next.contested
+    );
+    setContest("");
+  }
+
+  const txUrl = tx.hash ? `${EXPLORER_BASE}/tx/${tx.hash}` : "";
 
   return (
-    <div className="app">
+    <div className="app-shell">
       <header className="topbar">
-        <div className="topbar-in">
-          <div className="brand">
-            <img src="/logo-192.png" alt="" width={34} height={34} />
-            <div>
-              <strong>AsAtToday</strong>
-              <span>fact or promise</span>
-            </div>
-          </div>
-          <nav className="nav">
-            {TABS.map(([t, name]) => (
-              <button key={t} className={tab === t ? "nav-tab on" : "nav-tab"} onClick={() => setTab(t)}>{name}</button>
-            ))}
-          </nav>
-          {me ? <span className="wallet">{short(me)}</span> : <button className="wallet" onClick={connect}>Connect wallet</button>}
-        </div>
+        <button className="brand" onClick={() => setView("ledger")} aria-label="AccedeLedger home">
+          <img src="/accedeledger-mark.svg" alt="" />
+          <span>
+            <strong>AccedeLedger</strong>
+            <small>OUTSIDE DUTY CONTROL</small>
+          </span>
+        </button>
+        <nav aria-label="Primary">
+          <button className={view === "ledger" ? "active" : ""} onClick={() => setView("ledger")}>Ledger</button>
+          <button className={view === "open" ? "active" : ""} onClick={() => setView("open")}>Open</button>
+          <button className={view === "protocol" ? "active" : ""} onClick={() => setView("protocol")}>Protocol</button>
+        </nav>
+        <button className="wallet-button" onClick={connect}>
+          <Wallet size={17} /> {account ? short(account, 6, 4) : "Connect wallet"}
+        </button>
       </header>
-      <div className="subbar">
-        <div className="subbar-in">
-          <span className="net"><i /> StudioNet / 61999</span>
-          {CONTRACT_ADDRESS ? (
-            <a href={`${EXPLORER_BASE}/address/${CONTRACT_ADDRESS}`} target="_blank" rel="noreferrer">Project contract {short(CONTRACT_ADDRESS)} ↗</a>
-          ) : <span>No contract address configured</span>}
-        </div>
+
+      <div className="network-strip">
+        <span><i /> StudioNet / {STUDIONET_CHAIN_ID}</span>
+        <a href={CONTRACT_EXPLORER_URL} target="_blank" rel="noreferrer">
+          Project contract {short(CONTRACT_ADDRESS)} <ExternalLink size={13} />
+        </a>
       </div>
 
-      <main className="shell">
-        {tab === "ledger" && (
+      <main>
+        {view === "ledger" && (
           <>
-            <section className="hero">
-              <div className="hero-copy">
-                <p className="eyebrow">Read-only before wallet</p>
-                <h1>One sentence.<br /><em>One move, or thirty.</em></h1>
-                <p className="lead">
-                  Load a statement to see whether the validators read it as a fact as at today or a promise for later —
-                  and what the other side can still do about it.
-                </p>
+            <section className="hero compact">
+              <div>
+                <p className="eyebrow">READ-ONLY BEFORE WALLET</p>
+                <h1>One undertaking.<br /><em>One accountable edge.</em></h1>
+                <p className="hero-copy">Load any undertaking ID to see who authored it, whether another wallet must accede, and which consequences are still available.</p>
               </div>
-              <div className="loadbox">
-                <label>Statement ID
-                  <div className="row">
-                    <input value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="64-character id" spellCheck={false} />
-                    <button className="dark" onClick={() => loadById(idInput)}>Load</button>
-                  </div>
-                </label>
-                <small>No wallet is required to inspect accepted state.</small>
-                {recent.length > 0 && (
-                  <div className="recent">
-                    {recent.map((r) => <button key={r} className="link" onClick={() => loadById(r)}>{short(r, 8, 6)}</button>)}
-                  </div>
-                )}
+              <div className="load-panel">
+                <label htmlFor="undertaking-id">Undertaking ID</label>
+                <div className="input-action">
+                  <input
+                    id="undertaking-id"
+                    value={idInput}
+                    onChange={(event) => setIdInput(event.target.value)}
+                    placeholder="64-character id"
+                  />
+                  <button className="primary" onClick={loadRecord} disabled={loading}>
+                    {loading ? <LoaderCircle className="spin" size={18} /> : <BookOpen size={18} />}
+                    Load
+                  </button>
+                </div>
+                <p>No wallet is required to inspect accepted state.</p>
               </div>
             </section>
-            <hr className="rule" />
-            {current ? (
-              <StatementCard data={current} me={me} busy={busy} onAction={onAction} />
+
+            <TxBanner tx={tx} txUrl={txUrl} />
+
+            {!record ? (
+              <section className="empty-ledger">
+                <Fingerprint size={30} />
+                <h2>No undertaking loaded</h2>
+                <p>Paste an existing ID, or open a new undertaking from the Open tab.</p>
+                <button className="text-button" onClick={() => setView("open")}>Open an undertaking <ArrowRight size={16} /></button>
+              </section>
             ) : (
-              <div className="empty">
-                <div className="empty-mark" aria-hidden="true">◎ ▮▮▮▸</div>
-                <h3>No statement loaded</h3>
-                <p>Paste an existing ID, or record a new statement from the Record tab.</p>
-                <button className="link-strong" onClick={() => setTab("record")}>Record a statement →</button>
-              </div>
+              <section className="ledger-grid">
+                <article className="record-card">
+                  <div className="record-head">
+                    <div>
+                      <p className="eyebrow">ACCEPTED STATE</p>
+                      <h2>{record.counterparty_label}</h2>
+                    </div>
+                    <button className="icon-button" onClick={() => copyText(record.undertaking_id)} title="Copy ID"><Clipboard size={17} /></button>
+                  </div>
+                  <blockquote>{record.text}</blockquote>
+                  <div className="status-row">
+                    <Status label={record.outcome} tone={record.outcome === "AUTHOR_ONLY" ? "neutral" : "accent"} />
+                    <Status label={record.state} tone={stateTone(record.state)} />
+                    {record.contested && <Status label="CONTESTED" tone="bad" />}
+                  </div>
+                  <dl className="facts">
+                    <div><dt>Author</dt><dd>{short(record.creator)}</dd></div>
+                    <div><dt>Counterparty</dt><dd>{short(record.counterparty_wallet)}</dd></div>
+                    <div><dt>Acceded by</dt><dd>{record.acceded_by ? short(record.acceded_by) : "—"}</dd></div>
+                    <div><dt>Performance records</dt><dd>{record.performance_count}</dd></div>
+                  </dl>
+                  <button className="refresh-button" onClick={() => readRecord(record.undertaking_id)} disabled={loading || busy}>
+                    <RefreshCw size={16} /> Refresh accepted state
+                  </button>
+                </article>
+
+                <aside className="action-stack">
+                  <section className="role-card">
+                    <p className="eyebrow">CONNECTED ROLE</p>
+                    <h3>{!account ? "Wallet not connected" : roles.creator ? "Author" : roles.counterparty ? "Named counterparty" : "Observer"}</h3>
+                    <p>The contract—not this interface—enforces every role and transition.</p>
+                  </section>
+
+                  {record.state === "AWAITING_ACCESSION" && (
+                    <section className="action-card">
+                      <UserCheck size={22} />
+                      <div><h3>Counterparty decision</h3><p>Accede to activate, or decline irreversibly.</p></div>
+                      <div className="dual-buttons">
+                        <button className="primary" onClick={accede} disabled={busy || !roles.counterparty}>Accede</button>
+                        <button className="danger-outline" onClick={decline} disabled={busy || !roles.counterparty}>Decline</button>
+                      </div>
+                    </section>
+                  )}
+
+                  <section className="action-card">
+                    <History size={22} />
+                    <div><h3>Record performance</h3><p>Available only to the author while effective and uncontested.</p></div>
+                    <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What performance occurred?" maxLength={MAX_NOTE_LENGTH} />
+                    <button className="primary" onClick={recordPerformance} disabled={busy || !roles.creator || record.state !== "EFFECTIVE" || record.contested}>Record</button>
+                  </section>
+
+                  <section className="action-card">
+                    <Gavel size={22} />
+                    <div><h3>Contest undertaking</h3><p>The named counterparty may contest once after effectiveness.</p></div>
+                    <textarea value={contest} onChange={(event) => setContest(event.target.value)} placeholder="Why is this contested?" maxLength={MAX_NOTE_LENGTH} />
+                    <button className="danger-outline" onClick={contestUndertaking} disabled={busy || !roles.counterparty || record.state !== "EFFECTIVE" || record.contested}>Contest</button>
+                  </section>
+                </aside>
+
+                <article className="history-card">
+                  <div className="section-title"><History size={19} /><h2>Performance ledger</h2><span>{performances.length}</span></div>
+                  {performances.length === 0 ? <p className="muted">No performance has been recorded.</p> : (
+                    <ol>{performances.map((item) => <li key={item.index}><span>{String(item.index + 1).padStart(2, "0")}</span><p>{item.note}</p></li>)}</ol>
+                  )}
+                </article>
+
+                <article className={`contest-card ${record.contested ? "is-contested" : ""}`}>
+                  <div className="section-title"><Gavel size={19} /><h2>Contest status</h2></div>
+                  <strong>{record.contested ? "Contested" : "Not contested"}</strong>
+                  <p>{contestNote || "No contest note is stored."}</p>
+                </article>
+              </section>
             )}
           </>
         )}
 
-        {tab === "record" && (
-          <section className="panel">
-            <p className="eyebrow">Author</p>
-            <h2>Record a statement</h2>
-            <p className="muted">
-              The validators read your sentence once: does it assert how things stand now, or bind you to do something
-              later? An assertion gives the other side one move — challenge or accept — and then it closes. A promise gives
-              them up to 30 failure reports, and nobody can close it. Nothing is verified and no money is held.
-            </p>
-            <div className="grid2">
-              <label>Other side's wallet<input value={other} onChange={(e) => setOther(e.target.value)} placeholder="0x…" spellCheck={false} /></label>
-              <label>Other side's label<input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="how the sentence names them" />
-                <small>{pyLen(pyStrip(label))}/{MAX_LABEL_LENGTH}</small></label>
+        {view === "open" && (
+          <section className="form-layout">
+            <div className="form-intro">
+              <p className="eyebrow">SEMANTIC ENTRY POINT</p>
+              <h1>Open the text.<br /><em>Let the burden decide.</em></h1>
+              <p>Only this first write uses GenLayer consensus. The contract stores the exact author, named wallet, text, semantic outcome, and resulting state.</p>
+              <div className="flow-notes">
+                <span><b>AUTHOR_ONLY</b> → effective now</span>
+                <span><b>BINDS_OUTSIDE</b> → awaiting accession</span>
+              </div>
             </div>
-            <label>Statement<textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />
-              <small>{pyLen(pyStrip(text))}/{MAX_TEXT_LENGTH} · <Meter bytes={recordBytes} /></small></label>
-            {localId && <p className="meta">Statement id if recorded: <code>{localId}</code></p>}
-            <div className="actions">
-              <button className="dark" disabled={busy || recordReason !== null || recordBytes > CALLDATA_LIMIT} onClick={onRecord}>Record statement</button>
-              {recordReason && <span className="why">{recordReason}</span>}
-              {!recordReason && recordBytes > CALLDATA_LIMIT && <span className="why">Calldata over {CALLDATA_LIMIT} bytes; shorten the text.</span>}
-            </div>
-            <p className="muted small">The statement and label may not contain the tokens PRESENT_FACT or FUTURE_COMMITMENT; they are the answer tokens.</p>
-          </section>
-        )}
-
-        {tab === "compare" && (
-          <section className="panel">
-            <p className="eyebrow">Same two wallets</p>
-            <h2>Side by side</h2>
-            <p className="muted">One statement asserted as at today, one promised for later — the remedy flips between them.</p>
-            <div className="grid2">
-              <input value={leftId} onChange={(e) => setLeftId(e.target.value)} placeholder="first statement id" spellCheck={false} />
-              <input value={rightId} onChange={(e) => setRightId(e.target.value)} placeholder="second statement id" spellCheck={false} />
-            </div>
-            <div className="actions"><button className="dark" onClick={loadPair}>Compare</button></div>
-            <div className="pair">
-              {pair.map((p, i) => (
-                <div key={i}>
-                  {p ? <StatementCard data={p} me={me} busy={busy} onAction={onAction} /> : <p className="muted pane-empty">No statement loaded.</p>}
-                </div>
-              ))}
+            <div className="form-card">
+              <label>Named counterparty wallet<input value={counterparty} onChange={(event) => setCounterparty(event.target.value)} placeholder="0x…" /></label>
+              <label>Counterparty label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. the Supplier" maxLength={MAX_LABEL_LENGTH} /></label>
+              <label>Undertaking text<textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Describe one undertaking in complete language." maxLength={MAX_TEXT_LENGTH} rows={7} /></label>
+              <div className="form-footer"><span>{text.length}/{MAX_TEXT_LENGTH}</span><button className="primary large" onClick={openUndertaking} disabled={busy}><FilePlus2 size={18} /> Open undertaking</button></div>
+              {!account && <p className="form-hint">Connect the author wallet before submitting.</p>}
             </div>
           </section>
         )}
 
-        {tx.phase !== "idle" && (
-          <section className={`status status-${tx.phase}`}>
-            <strong>{tx.phase === "delayed" ? "Submitted — confirmation delayed" : tx.phase}</strong>
-            <span>{tx.message}</span>
-            {tx.hash && <a href={`${EXPLORER_BASE}/tx/${tx.hash}`} target="_blank" rel="noreferrer"><code>{tx.hash}</code></a>}
-            {tx.phase === "delayed" && <button onClick={checkAgain}>Check again</button>}
+        {view === "protocol" && (
+          <section className="protocol-layout">
+            <div className="protocol-intro">
+              <p className="eyebrow">SOURCE-BOUND DEPLOYMENT</p>
+              <h1>Semantic judgment.<br /><em>Deterministic consequence.</em></h1>
+              <p>AccedeLedger is the Project interface. Its frozen Intelligent Contract remains internally named OutsideDutyBind.</p>
+              <a className="primary link-button" href={CONTRACT_EXPLORER_URL} target="_blank" rel="noreferrer">Inspect contract <ExternalLink size={17} /></a>
+            </div>
+            <div className="protocol-grid">
+              <Metric icon={<ShieldCheck />} label="Protocol" value={limits ? `${limits.contract_name} v${limits.version}` : "Loading…"} />
+              <Metric icon={<Fingerprint />} label="Contract" value={short(CONTRACT_ADDRESS, 9, 7)} />
+              <Metric icon={<BookOpen />} label="Semantic outputs" value={limits?.semantic_outcomes.join(" / ") || "—"} />
+              <Metric icon={<CheckCircle2 />} label="Money / clock / web" value={limits ? `${limits.money_used ? "YES" : "NO"} / ${limits.clock_used ? "YES" : "NO"} / ${limits.external_web_used ? "YES" : "NO"}` : "—"} />
+              <div className="wide-metric"><span>Frozen source SHA-256</span><code>{SOURCE_SHA256}</code></div>
+              <div className="wide-metric"><span>Rubric hash</span><code>{limits?.rubric_hash || "Loading accepted state…"}</code></div>
+              {protocolError && <div className="protocol-error"><CircleAlert size={18} /> {protocolError}</div>}
+            </div>
           </section>
         )}
-
-        <footer className="foot">
-          GenLayer StudioNet · the contract holds no money and does not check whether a statement is true.
-        </footer>
       </main>
+
+      <footer>
+        <span>AccedeLedger / StudioNet</span>
+        <span>State comes from contract reads and user-signed transactions.</span>
+      </footer>
     </div>
   );
+}
+
+function Status({ label, tone }: { label: string; tone: string }) {
+  return <span className={`status ${tone}`}>{label}</span>;
+}
+
+function TxBanner({ tx, txUrl }: { tx: TxState; txUrl: string }) {
+  if (tx.kind === "idle") return null;
+  const duplicateRollback = tx.kind === "error" && Boolean(tx.hash) && tx.message.includes("Undertaking already exists");
+  return (
+    <section className={`tx-banner ${tx.kind}`}>
+      {tx.kind === "signing" || tx.kind === "submitted" ? <LoaderCircle className="spin" size={18} /> : tx.kind === "success" ? <CheckCircle2 size={18} /> : <CircleAlert size={18} />}
+      {tx.kind === "error" && tx.hash ? (
+        <div className="tx-failure">
+          <strong>Why this failed</strong>
+          <p>{tx.message}</p>
+          {duplicateRollback && (
+            <small>The id is derived from your address and the text only. Opening the same text again — even for a different counterparty — is a duplicate.</small>
+          )}
+        </div>
+      ) : <p>{tx.message}</p>}
+      {txUrl && <a href={txUrl} target="_blank" rel="noreferrer">Explorer <ExternalLink size={14} /></a>}
+    </section>
+  );
+}
+
+function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return <div className="metric"><span className="metric-icon">{icon}</span><small>{label}</small><strong>{value}</strong></div>;
 }
